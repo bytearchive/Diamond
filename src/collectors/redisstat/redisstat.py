@@ -106,6 +106,44 @@ class RedisCollector(diamond.collector.Collector):
     _RENAMED_KEYS = {'last_save.changes_since': 'rdb_changes_since_last_save',
                      'last_save.time': 'rdb_last_save_time'}
 
+    # List of commands for which stats are returned (redis 2.8.12)
+    _COMMANDS = ['del',
+                 'eval',
+                 'evalsha',
+                 'exec',
+                 'exists',
+                 'expire',
+                 'expireat',
+                 'get',
+                 'hdel',
+                 'hget',
+                 'hgetall',
+                 'hmset',
+                 'hset',
+                 'incrby',
+                 'keys',
+                 'llen',
+                 'multi',
+                 'ping',
+                 'randomkey',
+                 'sadd',
+                 'scan',
+                 'scard',
+                 'sdiff',
+                 'select',
+                 'set',
+                 'setex',
+                 'sismember',
+                 'smembers',
+                 'srem',
+                 'sscan',
+                 'ttl',
+                 'zcard',
+                 'zincrby',
+                 'zrangebyscore',
+                 'zremrangebyscore',
+                 'zscan']
+
     def process_config(self):
         super(RedisCollector, self).process_config()
         instance_list = self.config['instances']
@@ -181,7 +219,8 @@ class RedisCollector(diamond.collector.Collector):
             'auth': 'Password?',
             'databases': 'how many database instances to collect',
             'instances': "Redis addresses, comma separated, syntax:" +
-                         " nick1@host:port, nick2@:port or nick3@host"
+                         " nick1@host:port, nick2@:port or nick3@host",
+            'command_stats': "Include command stats"
         })
         return config_help
 
@@ -202,6 +241,7 @@ class RedisCollector(diamond.collector.Collector):
             'databases': self._DATABASE_COUNT,
             'path': 'redis',
             'instances': [],
+            'command_stats': None
         })
         return config
 
@@ -261,7 +301,8 @@ class RedisCollector(diamond.collector.Collector):
         if client is None:
             return None
 
-        info = client.info()
+        section = 'all' if self.config['command_stats'] == 'true' else None
+        info = client.info(section)
         del client
         return info
 
@@ -307,6 +348,15 @@ class RedisCollector(diamond.collector.Collector):
         for key in ['last_save_time', 'rdb_last_save_time']:
             if key in info:
                 data['last_save.time_since'] = int(time.time()) - info[key]
+
+        if self.config['command_stats'] == 'true':
+            for cmd in self._COMMANDS:
+                stat_key = "cmdstat_{}".format(cmd)
+                cmd_stats = info.get(stat_key)
+                if not cmd_stats:
+                    continue
+                data["commands.{}.usec".format(cmd)] = cmd_stats['usec']
+                data["commands.{}.calls".format(cmd)] = cmd_stats['calls']
 
         # Publish the data to graphite
         for key in data:
